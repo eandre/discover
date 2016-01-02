@@ -33,6 +33,8 @@ func (v *trimVisitor) Visit(node ast.Node) ast.Visitor {
 			}
 		}
 		node.Decls = replaced
+
+	// Node types containing lists of statements
 	case *ast.BlockStmt:
 		list = &node.List
 	case *ast.CommClause:
@@ -77,7 +79,7 @@ func (v *trimVisitor) replaceStmt(stmt ast.Stmt) []ast.Stmt {
 		}
 		return nil
 
-	case *ast.RangeStmt:
+	case *ast.ForStmt:
 		if v.visited(stmt.Body) {
 			return []ast.Stmt{stmt}
 		}
@@ -97,34 +99,52 @@ func (v *trimVisitor) replaceStmt(stmt ast.Stmt) []ast.Stmt {
 		return result
 
 	case *ast.IfStmt:
-		var result []ast.Stmt
 		vIf := v.visited(stmt.Body)
 		vElse := v.visited(stmt.Else)
 
-		if !vIf && !vElse {
-			// If we have a CallExpr in the init or cond, move it out.
-			// Don't add the if statement either way since it was
-			// not visited.
-			initCall := v.findCall(stmt.Init)
-			condCall := v.findCall(stmt.Cond)
-			if initCall != nil {
-				result = append(result, &ast.ExprStmt{initCall})
+		if !vIf {
+			var result []ast.Stmt
+			// If we didn't reach the body, pull out any calls from
+			// init and cond.
+			nodes := []*ast.CallExpr{
+				v.findCall(stmt.Init),
+				v.findCall(stmt.Cond),
 			}
-			if condCall != nil {
-				result = append(result, &ast.ExprStmt{condCall})
+			for _, call := range nodes {
+				if call != nil {
+					result = append(result, &ast.ExprStmt{call})
+				}
 			}
-		} else if !vIf && vElse {
-			// Only add 'else'
-			result = append(result, v.replaceStmt(stmt.Else)...)
-		} else if vIf && !vElse {
-			// Remove else
-			stmt.Else = nil
-			result = append(result, stmt)
+
+			if vElse {
+				// We reached the else; add it
+				result = append(result, v.replaceStmt(stmt.Else)...)
+			}
+			return result
+		} else {
+			// We did take the if body
+			if !vElse {
+				// But not the else: remove it
+				stmt.Else = nil
+			}
+
+			return []ast.Stmt{stmt}
 		}
-		return result
+
+	case *ast.SelectStmt:
+		var list []ast.Stmt
+		for _, stmt := range stmt.Body.List {
+			if v.visited(stmt) {
+				list = append(list, stmt)
+			}
+		}
+		stmt.Body.List = list
+		return []ast.Stmt{stmt}
 	}
 }
 
+// visited is a helper function to return whether or not a statement
+// was visited. If stmt is nil, visited returns false.
 func (v *trimVisitor) visited(stmt ast.Stmt) bool {
 	if stmt == nil { // for convenience with e.g. IfStmt.Else
 		return false
@@ -132,6 +152,9 @@ func (v *trimVisitor) visited(stmt ast.Stmt) bool {
 	return v.p.Stmts[stmt]
 }
 
+// findCall returns the first *ast.CallExpr encountered within the tree
+// rooted at node, or nil if no CallExpr was found. This is useful for
+// "pulling out" calls out of a statement or expression.
 func (v *trimVisitor) findCall(node ast.Node) *ast.CallExpr {
 	if node == nil { // for convenience
 		return nil

@@ -11,13 +11,17 @@ import (
 	"golang.org/x/tools/cover"
 )
 
+// Profile contains a map of statements and funcs that were covered
+// by the cover profiles. It supports using the information to trim
+// an AST down to the nodes that were actually reached.
 type Profile struct {
 	Stmts map[ast.Stmt]bool
 	Funcs map[*ast.FuncDecl]bool
-	Fset  *token.FileSet
 	Files []*ast.File
+	Fset  *token.FileSet
 }
 
+// ParseProfile parses a set of coverage profiles to produce a *Profile.
 func ParseProfile(profs []*cover.Profile) (*Profile, error) {
 	profile := &Profile{
 		Stmts: make(map[ast.Stmt]bool),
@@ -85,6 +89,8 @@ func ParseProfile(profs []*cover.Profile) (*Profile, error) {
 	return profile, nil
 }
 
+// findFile tries to find the full path to a file, by looking in $GOROOT
+// and $GOPATH.
 func findFile(file string) (filename string, err error) {
 	dir, file := filepath.Split(file)
 	if dir != "" {
@@ -108,24 +114,23 @@ func findFuncs(fset *token.FileSet, name string) (*ast.File, []*funcExtent, []*s
 	return parsedFile, visitor.funcs, visitor.stmts, nil
 }
 
-type extent struct {
+// funcExtent describes a function's extent in the source by file and position.
+type funcExtent struct {
+	decl      *ast.FuncDecl
+	name      string
 	startLine int
 	startCol  int
 	endLine   int
 	endCol    int
 }
 
-// funcExtent describes a function's extent in the source by file and position.
-type funcExtent struct {
-	extent
-	decl *ast.FuncDecl
-	name string
-}
-
-// stmtExtent describes a statements's extent in the source by file and position.
+// stmtExtent describes a statement's extent in the source by file and position.
 type stmtExtent struct {
-	extent
-	stmt ast.Stmt
+	stmt      ast.Stmt
+	startLine int
+	startCol  int
+	endLine   int
+	endCol    int
 }
 
 // funcVisitor implements the visitor that builds the function position list for a file.
@@ -141,97 +146,23 @@ func (v *funcVisitor) Visit(node ast.Node) ast.Visitor {
 		start := v.fset.Position(f.Pos())
 		end := v.fset.Position(f.End())
 		fe := &funcExtent{
-			extent: extent{
-				startLine: start.Line,
-				startCol:  start.Column,
-				endLine:   end.Line,
-				endCol:    end.Column,
-			},
-			decl: f,
+			decl:      f,
+			startLine: start.Line,
+			startCol:  start.Column,
+			endLine:   end.Line,
+			endCol:    end.Column,
 		}
 		v.funcs = append(v.funcs, fe)
 	} else if s, ok := node.(ast.Stmt); ok {
 		start, end := v.fset.Position(s.Pos()), v.fset.Position(s.End())
 		se := &stmtExtent{
-			extent: extent{
-				startLine: start.Line,
-				startCol:  start.Column,
-				endLine:   end.Line,
-				endCol:    end.Column,
-			},
-			stmt: s,
+			stmt:      s,
+			startLine: start.Line,
+			startCol:  start.Column,
+			endLine:   end.Line,
+			endCol:    end.Column,
 		}
 		v.stmts = append(v.stmts, se)
 	}
 	return v
-}
-
-type stmtVisitor struct {
-	fset  *token.FileSet
-	stmts []*stmtExtent
-}
-
-func (v *stmtVisitor) VisitStmt(s ast.Stmt) {
-	statements := []ast.Stmt{s}
-	switch s := s.(type) {
-	case *ast.BlockStmt:
-		statements = s.List
-	case *ast.CaseClause:
-		statements = s.Body
-	case *ast.CommClause:
-		statements = s.Body
-	case *ast.ForStmt:
-		if s.Init != nil {
-			v.VisitStmt(s.Init)
-		}
-		if s.Post != nil {
-			v.VisitStmt(s.Post)
-		}
-		v.VisitStmt(s.Body)
-	case *ast.IfStmt:
-		if s.Init != nil {
-			v.VisitStmt(s.Init)
-		}
-		v.VisitStmt(s.Body)
-		if s.Else != nil {
-			v.VisitStmt(s.Else)
-		}
-	case *ast.LabeledStmt:
-		v.VisitStmt(s.Stmt)
-	case *ast.RangeStmt:
-		v.VisitStmt(s.Body)
-	case *ast.SelectStmt:
-		v.VisitStmt(s.Body)
-	case *ast.SwitchStmt:
-		if s.Init != nil {
-			v.VisitStmt(s.Init)
-		}
-		v.VisitStmt(s.Body)
-	case *ast.TypeSwitchStmt:
-		if s.Init != nil {
-			v.VisitStmt(s.Init)
-		}
-		v.VisitStmt(s.Assign)
-		v.VisitStmt(s.Body)
-	}
-
-	for _, s := range statements {
-		switch s.(type) {
-		case *ast.CaseClause, *ast.CommClause, *ast.BlockStmt:
-			break
-		default:
-			start, end := v.fset.Position(s.Pos()), v.fset.Position(s.End())
-			se := &stmtExtent{
-				extent: extent{
-					startLine: start.Line,
-					startCol:  start.Column,
-					endLine:   end.Line,
-					endCol:    end.Column,
-				},
-				stmt: s,
-			}
-			v.stmts = append(v.stmts, se)
-		}
-		v.VisitStmt(s)
-	}
 }
