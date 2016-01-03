@@ -118,7 +118,15 @@ func (v *trimVisitor) replaceStmt(stmt ast.Stmt) []ast.Stmt {
 
 			if vElse {
 				// We reached the else; add it
-				result = append(result, v.replaceStmt(stmt.Else)...)
+				if block, ok := stmt.Else.(*ast.BlockStmt); ok {
+					// For a block statement, add the statements individually
+					// so we don't end up with an unnecessary block
+					for _, stmt := range block.List {
+						result = append(result, v.replaceStmt(stmt)...)
+					}
+				} else {
+					result = append(result, v.replaceStmt(stmt.Else)...)
+				}
 			}
 			return result
 		} else {
@@ -140,6 +148,38 @@ func (v *trimVisitor) replaceStmt(stmt ast.Stmt) []ast.Stmt {
 		}
 		stmt.Body.List = list
 		return []ast.Stmt{stmt}
+
+	case *ast.SwitchStmt:
+		var list []ast.Stmt
+		for _, stmt := range stmt.Body.List {
+			if v.visitedAndMatters(stmt) {
+				list = append(list, stmt)
+			}
+		}
+
+		// If we didn't visit any case clauses, don't add the select at all.
+		if len(list) == 0 {
+			return nil
+		} else {
+			stmt.Body.List = list
+			return []ast.Stmt{stmt}
+		}
+
+	case *ast.TypeSwitchStmt:
+		var list []ast.Stmt
+		for _, stmt := range stmt.Body.List {
+			if v.visitedAndMatters(stmt) {
+				list = append(list, stmt)
+			}
+		}
+
+		// If we didn't visit any case clauses, don't add the select at all.
+		if len(list) == 0 {
+			return nil
+		} else {
+			stmt.Body.List = list
+			return []ast.Stmt{stmt}
+		}
 	}
 }
 
@@ -150,6 +190,43 @@ func (v *trimVisitor) visited(stmt ast.Stmt) bool {
 		return false
 	}
 	return v.p.Stmts[stmt]
+}
+
+// visitedAndMatters is like visited, but also checks that the statement
+// has any effect. For example, an empty block has no effect and thus
+// is considered to not matter, even though it may have been visited.
+func (v *trimVisitor) visitedAndMatters(stmt ast.Stmt) bool {
+	if !v.visited(stmt) {
+		return false
+	}
+
+	switch stmt := stmt.(type) {
+	default:
+		// By default, statements matter
+		return true
+
+	case *ast.EmptyStmt:
+		// Empty statements do not matter
+		return false
+
+	case *ast.BlockStmt:
+		// Blocks matter if and only if any of the containing statements
+		// matter.
+		for _, stmt := range stmt.List {
+			if v.visitedAndMatters(stmt) {
+				return true
+			}
+		}
+		return false
+
+	case *ast.CaseClause:
+		for _, stmt := range stmt.Body {
+			if v.visitedAndMatters(stmt) {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 // findCall returns the first *ast.CallExpr encountered within the tree
