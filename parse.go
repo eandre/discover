@@ -1,3 +1,8 @@
+// Package discover implements trimming of ASTs based on test coverage,
+// to aid in conceptualizing large code bases.
+//
+// It is based on the idea presented by Alan Shreve in his talk on
+// conceptualizing large software systems, held at dotGo 2015 in Paris.
 package discover
 
 import (
@@ -15,22 +20,24 @@ import (
 // by the cover profiles. It supports using the information to trim
 // an AST down to the nodes that were actually reached.
 type Profile struct {
-	Stmts map[ast.Stmt]bool
-	Funcs map[*ast.FuncDecl]bool
-	Files []*ast.File
-	Fset  *token.FileSet
+	Stmts       map[ast.Stmt]bool
+	Funcs       map[*ast.FuncDecl]bool
+	ImportPaths map[*ast.File]string
+	Files       []*ast.File
+	Fset        *token.FileSet
 }
 
 // ParseProfile parses a set of coverage profiles to produce a *Profile.
 func ParseProfile(profs []*cover.Profile) (*Profile, error) {
 	profile := &Profile{
-		Stmts: make(map[ast.Stmt]bool),
-		Funcs: make(map[*ast.FuncDecl]bool),
-		Fset:  token.NewFileSet(),
+		Stmts:       make(map[ast.Stmt]bool),
+		Funcs:       make(map[*ast.FuncDecl]bool),
+		ImportPaths: make(map[*ast.File]string),
+		Fset:        token.NewFileSet(),
 	}
 
 	for _, prof := range profs {
-		file, err := findFile(prof.FileName)
+		file, importPath, err := findFile(prof.FileName)
 		if err != nil {
 			return nil, err
 		}
@@ -40,6 +47,7 @@ func ParseProfile(profs []*cover.Profile) (*Profile, error) {
 			return nil, err
 		}
 		profile.Files = append(profile.Files, f)
+		profile.ImportPaths[f] = importPath
 
 		blocks := prof.Blocks
 		for len(funcs) > 0 {
@@ -91,16 +99,16 @@ func ParseProfile(profs []*cover.Profile) (*Profile, error) {
 
 // findFile tries to find the full path to a file, by looking in $GOROOT
 // and $GOPATH.
-func findFile(file string) (filename string, err error) {
+func findFile(file string) (filename, pkgPath string, err error) {
 	dir, file := filepath.Split(file)
 	if dir != "" {
 		dir = dir[:len(dir)-1] // drop trailing '/'
 	}
 	pkg, err := build.Import(dir, ".", build.FindOnly)
 	if err != nil {
-		return "", fmt.Errorf("can't find %q: %v", file, err)
+		return "", "", fmt.Errorf("can't find %q: %v", file, err)
 	}
-	return filepath.Join(pkg.Dir, file), nil
+	return filepath.Join(pkg.Dir, file), pkg.ImportPath, nil
 }
 
 // findFuncs parses the file and returns a slice of FuncExtent descriptors.

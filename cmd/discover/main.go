@@ -4,7 +4,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"go/printer"
+	"go/ast"
+	"go/format"
+	"go/token"
 	"io/ioutil"
 	"os"
 	"os/exec"
@@ -16,11 +18,24 @@ import (
 )
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: \n\ndiscover command [arguments\n\n")
-	fmt.Fprintf(os.Stderr, "The commands are:")
-	fmt.Fprintf(os.Stderr, "\tdiscover test <test name> [<test name>...]")
-	fmt.Fprintf(os.Stderr, "\tdiscover parse <cover profile>")
+	fmt.Fprintf(os.Stderr, `Usage: \n\ndiscover [flags] command [<args>...]
+
+The commands are:
+
+	discover [-output=<dir>] test [<testRegexp>]
+		Runs "go test -run <testRegexp>" to output a cover profile,
+		and then parses it and outputs the result.
+
+	discover [-output=<dir>] parse <cover profile>
+		Parses the given cover profile and outputs the result.
+
+For both commands, the output flag specifies a directory to write files to,
+as opposed to printing to stdout. If any of the files exist already, they will
+be overwritten.
+`)
 }
+
+var output = flag.String("output", "", "Directory to write output files to (will overwrite existing files)")
 
 func main() {
 	flag.Usage = usage
@@ -101,9 +116,39 @@ func parseProfile(fileName string) error {
 		}
 
 		fn := filepath.Base(prof.Fset.File(f.Pos()).Name())
-		fmt.Printf("%s:\n%s\n", fn, strings.Repeat("=", len(fn)))
-		printer.Fprint(os.Stdout, prof.Fset, f)
-		fmt.Printf("\n\n")
+		importPath := prof.ImportPaths[f]
+		if importPath == "" {
+			return fmt.Errorf("No import path found for %q", fn)
+		}
+
+		if err := outputFile(importPath, fn, prof.Fset, f); err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+func outputFile(importPath, name string, fset *token.FileSet, file *ast.File) error {
+	if *output != "" {
+		// Write to file
+		dir := filepath.Join(*output, importPath)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return err
+		}
+		target := filepath.Join(dir, name)
+		f, err := os.Create(target)
+		if err != nil {
+			return err
+		}
+		if err := format.Node(f, fset, file); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	// Print to stdout
+	fmt.Printf("%s:\n%s\n", name, strings.Repeat("=", len(name)))
+	format.Node(os.Stdout, fset, file)
+	fmt.Printf("\n\n")
 	return nil
 }
