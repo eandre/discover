@@ -1,4 +1,4 @@
-package discover
+package parse
 
 import "go/ast"
 

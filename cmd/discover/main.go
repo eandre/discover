@@ -13,8 +13,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/eandre/discover"
+	"github.com/eandre/discover/build"
+	"github.com/eandre/discover/parse"
 	"golang.org/x/tools/cover"
+	"golang.org/x/tools/go/loader"
 )
 
 func usage() {
@@ -29,9 +31,16 @@ The commands are:
 	discover [-output=<dir>] parse <cover profile>
 		Parses the given cover profile and outputs the result.
 
+
 For both commands, the output flag specifies a directory to write files to,
 as opposed to printing to stdout. If any of the files exist already, they will
 be overwritten.
+
+An additional command is available for debugging purposes:
+
+	discover [-output=<dir>] annotate <pkg>
+		Annotates pkg, writing the annotated source to dir. If no dir is given,
+		it is written to stdout.
 `)
 }
 
@@ -59,6 +68,16 @@ func main() {
 			os.Exit(1)
 		}
 		if err := parseProfile(flag.Arg(1)); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+
+	case "annotate":
+		if flag.NArg() <= 1 {
+			fmt.Fprintln(os.Stderr, "missing pkg")
+			os.Exit(1)
+		}
+		if err := annotate(flag.Args()[1:]); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(1)
 		}
@@ -102,7 +121,7 @@ func parseProfile(fileName string) error {
 		return err
 	}
 
-	prof, err := discover.ParseProfile(profiles)
+	prof, err := parse.CoverProfiles(profiles)
 	if err != nil {
 		return err
 	}
@@ -150,5 +169,33 @@ func outputFile(importPath, name string, fset *token.FileSet, file *ast.File) er
 	fmt.Printf("%s:\n%s\n", name, strings.Repeat("=", len(name)))
 	format.Node(os.Stdout, fset, file)
 	fmt.Printf("\n\n")
+	return nil
+}
+
+func annotate(args []string) error {
+	var conf loader.Config
+	_, err := conf.FromArgs(args, false /* wantTests */)
+	if err != nil {
+		return err
+	}
+
+	prog, err := conf.Load()
+	if err != nil {
+		return err
+	}
+
+	if *output != "" {
+		if err := os.MkdirAll(*output, 0755); err != nil {
+			return err
+		}
+	}
+
+	if err := build.Rewrite(prog, *output); err != nil {
+		return err
+	}
+
+	if *output != "" {
+		fmt.Fprintln(os.Stderr, "Wrote annotated source to", *output)
+	}
 	return nil
 }

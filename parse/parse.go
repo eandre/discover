@@ -1,9 +1,5 @@
-// Package discover implements trimming of ASTs based on test coverage,
-// to aid in conceptualizing large code bases.
-//
-// It is based on the idea presented by Alan Shreve in his talk on
-// conceptualizing large software systems, held at dotGo 2015 in Paris.
-package discover
+// Parse implements the parsing of profiles and trimming of ASTs.
+package parse
 
 import (
 	"fmt"
@@ -27,8 +23,8 @@ type Profile struct {
 	Fset        *token.FileSet
 }
 
-// ParseProfile parses a set of coverage profiles to produce a *Profile.
-func ParseProfile(profs []*cover.Profile) (*Profile, error) {
+// CoverProfiles parses a set of coverage profiles to produce a *Profile.
+func CoverProfiles(profs []*cover.Profile) (*Profile, error) {
 	profile := &Profile{
 		Stmts:       make(map[ast.Stmt]bool),
 		Funcs:       make(map[*ast.FuncDecl]bool),
